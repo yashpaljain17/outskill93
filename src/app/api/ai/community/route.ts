@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getUserClient } from "@/lib/supabase/server";
+import { getAdminClient } from "@/lib/supabase/admin";
 import { FALLBACK_BETA, MODEL, SAFETY_RULES, aiErrorMessage, getAnthropic } from "@/lib/ai/claude";
 
 export const maxDuration = 60;
@@ -24,6 +25,14 @@ export async function POST(req: Request) {
   if (!q) return NextResponse.json({ error: "Question not found" }, { status: 404 });
   if (q.author_id !== user.id) return NextResponse.json({ error: "Only the author can request this" }, { status: 403 });
   if (q.ai_answer) return NextResponse.json({ answer: q.ai_answer });
+
+  const admin = getAdminClient();
+  if (!admin) {
+    return NextResponse.json(
+      { error: "SUPABASE_SERVICE_ROLE_KEY is not set. Add it to .env.local and restart the dev server." },
+      { status: 503 }
+    );
+  }
 
   try {
     const client = getAnthropic();
@@ -50,7 +59,7 @@ ${SAFETY_RULES}
       .map((b) => (b.type === "text" ? b.text : ""))
       .join("")
       .trim();
-    if (answer) await supabase.from("questions").update({ ai_answer: answer }).eq("id", q.id);
+    if (answer) await admin.from("questions").update({ ai_answer: answer }).eq("id", q.id).is("ai_answer", null);
     return NextResponse.json({ answer });
   } catch (err) {
     const { message, status } = aiErrorMessage(err);
