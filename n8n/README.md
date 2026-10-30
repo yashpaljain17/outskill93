@@ -30,6 +30,9 @@ PawPal (owner picks) ──▶ pawpal-booking-choice ──▶ reserve ──▶
 3. Open your workflow → **⋯ → Import from File** → `n8n/pawpal-booking.workflow.json`.
 4. Open each node with a ⚠️ credential warning and pick **PawPal secret** (webhooks and calls to PawPal)
    or your **Google Calendar** credential (`Check my calendar`, `Add to Google Calendar`).
+   In the Google Calendar credential, set **Allowed HTTP Request Domains** to **Specific Domains:
+   `www.googleapis.com`**. The default (None) blocks the HTTP Request nodes with
+   "This credential is configured to prevent use within an HTTP Request node".
 5. **Activate** the workflow (toggle at the top right).
 6. In Vercel → Settings → Environment Variables, add
    `N8N_BOOKING_WEBHOOK_URL = https://yashpalvain.app.n8n.cloud/webhook/pawpal-booking`
