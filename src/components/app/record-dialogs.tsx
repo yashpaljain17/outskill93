@@ -237,9 +237,10 @@ export function AppointmentDialog({
 }: BaseProps<Appointment>) {
   const supabase = useSupabase();
   const [busy, setBusy] = useState(false);
+  const [now] = useState(() => Date.now());
   const defaultWhen = initial
     ? format(new Date(initial.starts_at), "yyyy-MM-dd'T'HH:mm")
-    : format(new Date(Date.now() + 86400000), "yyyy-MM-dd'T'10:00");
+    : format(new Date(now + 86400000), "yyyy-MM-dd'T'10:00");
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();

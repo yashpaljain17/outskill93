@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /** Tiny data loader: runs `load` on mount / when deps change, exposes `reload`. */
 export function useRows<T>(load: () => Promise<T>, deps: unknown[]) {
@@ -8,7 +8,16 @@ export function useRows<T>(load: () => Promise<T>, deps: unknown[]) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const loadRef = useRef(load);
-  loadRef.current = load;
+  useLayoutEffect(() => {
+    loadRef.current = load;
+  });
+
+  // Back to loading as soon as deps change (adjusting state during render, not in the effect).
+  const [prevDeps, setPrevDeps] = useState(deps);
+  if (deps.length !== prevDeps.length || deps.some((d, i) => !Object.is(d, prevDeps[i]))) {
+    setPrevDeps(deps);
+    setLoading(true);
+  }
 
   const reload = useCallback(async () => {
     try {
@@ -23,7 +32,6 @@ export function useRows<T>(load: () => Promise<T>, deps: unknown[]) {
   }, []);
 
   useEffect(() => {
-    setLoading(true);
     void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
