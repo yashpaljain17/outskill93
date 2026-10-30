@@ -13,7 +13,7 @@ import { PawIcon } from "@/components/app/logo";
 import { useSupabase } from "@/hooks/use-supabase";
 import { must, useRows } from "@/hooks/use-rows";
 import { useVoice } from "@/hooks/use-voice";
-import type { Pet } from "@/lib/types";
+import type { Appointment, Pet } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface ChatMessage {
@@ -29,7 +29,7 @@ const SUGGESTIONS = [
   "Is any vaccination due soon?",
   "Add an evening walk at 7pm every day",
   "Can dogs eat grapes?",
-  "Book a vet check-up next Tuesday at 10am",
+  "Book Bruno's vaccination at the Indiranagar clinic tomorrow morning",
   "Tips for brushing a cat that hates it",
 ];
 
@@ -49,6 +49,20 @@ export function Assistant() {
   const voiceModeRef = useRef(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const voice = useVoice();
+  const phaseRef = useRef<VoicePhase>("idle");
+  /** Booking id -> last status seen, for bookings the booking workflow is still working on. */
+  const watchedRef = useRef(new Map<string, string>());
+  const [watchCount, setWatchCount] = useState(0);
+  /** Announcements waiting to be spoken in voice mode. */
+  const spokenQueueRef = useRef<string[]>([]);
+  /** While a reply streams in, booking updates wait here so they don't mix into it. */
+  const streamingRef = useRef(false);
+  const heldRef = useRef<{ text: string; href?: string }[]>([]);
+  const flushHeld = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
 
   const { data: pets } = useRows(
     async () => must(await supabase.from("pets").select("*").order("created_at")) as Pet[],
@@ -69,6 +83,7 @@ export function Assistant() {
       setMessages((m) => [...m, { role: "user", content }, { role: "assistant", content: "", status: "Thinking…" }]);
       messagesRef.current = [...messagesRef.current, { role: "user", content }];
       setBusy(true);
+      streamingRef.current = true;
 
       const patchLast = (fn: (m: ChatMessage) => ChatMessage) =>
         setMessages((all) => {
@@ -108,6 +123,7 @@ export function Assistant() {
               | { type: "text"; text: string }
               | { type: "status"; text: string }
               | { type: "action"; label: string; href: string }
+              | { type: "booking"; id: string }
               | { type: "error"; message: string }
               | { type: "done" };
             if (ev.type === "text") {
@@ -117,6 +133,9 @@ export function Assistant() {
               patchLast((m) => ({ ...m, status: ev.text }));
             } else if (ev.type === "action") {
               patchLast((m) => ({ ...m, actions: [...(m.actions ?? []), { label: ev.label, href: ev.href }] }));
+            } else if (ev.type === "booking") {
+              watchedRef.current.set(ev.id, "requested");
+              setWatchCount(watchedRef.current.size);
             } else if (ev.type === "error") {
               reply = reply || ev.message;
               patchLast((m) => ({ ...m, content: m.content || ev.message, error: !m.content, status: undefined }));
@@ -131,17 +150,88 @@ export function Assistant() {
         if (!opts.voice) toast.error(message);
       } finally {
         setBusy(false);
+        streamingRef.current = false;
       }
       messagesRef.current = [...messagesRef.current, { role: "assistant", content: reply }];
+      flushHeld.current();
       return reply;
     },
     [petId]
   );
 
+  /** Adds a message from PawPal that the user didn't ask for (booking updates), and speaks it in voice mode. */
+  const announce = useCallback(
+    (text: string, href?: string) => {
+      if (streamingRef.current) {
+        heldRef.current.push({ text, href });
+        return;
+      }
+      setMessages((m) => [...m, { role: "assistant", content: text, actions: href ? [{ label: "View appointment", href }] : undefined }]);
+      messagesRef.current = [...messagesRef.current, { role: "assistant", content: text }];
+      if (voiceModeRef.current) {
+        spokenQueueRef.current.push(text);
+        // Interrupt listening so the loop speaks the update straight away.
+        if (phaseRef.current === "listening") voice.stopAll();
+      }
+    },
+    [voice]
+  );
+
+  useEffect(() => {
+    flushHeld.current = () => {
+      const held = heldRef.current.splice(0);
+      held.forEach(({ text, href }) => announce(text, href));
+    };
+  }, [announce]);
+
+  // Poll bookings the workflow is handling and report each outcome once.
+  useEffect(() => {
+    if (!watchCount) return;
+    const timer = setInterval(async () => {
+      const ids = [...watchedRef.current.keys()];
+      if (!ids.length) return;
+      const { data } = await supabase
+        .from("appointments")
+        .select("id, pet_id, title, status, starts_at, location, notes, booking_options")
+        .in("id", ids);
+      for (const a of (data ?? []) as Appointment[]) {
+        const prev = watchedRef.current.get(a.id);
+        if (prev === a.status) continue;
+        watchedRef.current.set(a.id, a.status);
+        const href = `/pets/${a.pet_id}?tab=appointments`;
+        const when = (iso: string) =>
+          new Date(iso).toLocaleString(undefined, { weekday: "long", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+        if (a.status === "scheduled") {
+          watchedRef.current.delete(a.id);
+          // The title usually names the clinic already ("Check-up at …"); then only add the street address.
+          const [place, ...address] = (a.location ?? "").split(", ");
+          const where = !a.location ? "" : a.title.includes(place) ? address.join(", ") : a.location;
+          announce(`Booked! ${a.title} on ${when(a.starts_at)}${where ? `, ${where}` : ""}. It's in your Google Calendar too.`, href);
+        } else if (a.status === "options" && a.booking_options?.length) {
+          const list = a.booking_options
+            .map((o, i) => `${i + 1}) ${when(o.starts_at)} with ${o.doctor_name} at ${o.clinic_name}`)
+            .join("; ");
+          announce(`The clinics couldn't do the time you asked for. Available: ${list}. Which one should I book? Or say no.`, href);
+        } else if (a.status === "cancelled") {
+          watchedRef.current.delete(a.id);
+          const reason = a.notes?.split("\n").reverse().find((l) => l.startsWith("Clinic: "))?.slice(8);
+          announce(`Sorry, I couldn't book ${a.title}.${reason ? ` ${reason}` : ""}`, href);
+        }
+      }
+      setWatchCount(watchedRef.current.size);
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [watchCount, supabase, announce]);
+
   /* ---------------- Voice conversation loop ---------------- */
   const runVoiceLoop = useCallback(async () => {
     while (voiceModeRef.current) {
       try {
+        while (spokenQueueRef.current.length && voiceModeRef.current) {
+          setPhase("speaking");
+          await voice.speak(spokenQueueRef.current.shift()!);
+        }
+        if (!voiceModeRef.current) break;
         setPhase("listening");
         const heard = await voice.listen();
         if (!voiceModeRef.current) break;

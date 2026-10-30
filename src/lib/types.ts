@@ -67,7 +67,19 @@ export interface Appointment {
   starts_at: string;
   location: string | null;
   notes: string | null;
-  status: "requested" | "scheduled" | "done" | "cancelled";
+  status: "requested" | "options" | "scheduled" | "done" | "cancelled";
+  booking_options?: BookingOptionRow[] | null;
+}
+
+/** A slot the booking workflow offered when the requested time wasn't available. */
+export interface BookingOptionRow {
+  clinic_id: string;
+  clinic_name: string;
+  address?: string | null;
+  doctor_id: string;
+  doctor_name: string;
+  starts_at: string;
+  ends_at: string;
 }
 
 export interface Checklist {

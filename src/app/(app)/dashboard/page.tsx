@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/app/fields";
 import { PetAvatar } from "@/components/app/pet-avatar";
 import { PetFormDialog } from "@/components/app/pet-form-dialog";
 import { TodayTasks, buildTodayTasks } from "@/components/app/today-tasks";
+import { BookingOptions } from "@/components/app/booking-options";
 import { useSupabase, useUser } from "@/hooks/use-supabase";
 import { must, useRows } from "@/hooks/use-rows";
 import { petAge, todayISO } from "@/lib/pet";
@@ -35,8 +36,8 @@ export default function DashboardPage() {
       supabase
         .from("appointments")
         .select("*")
-        .in("status", ["scheduled", "requested"])
-        .gte("starts_at", new Date().toISOString())
+        // Confirmed visits from now on, plus booking requests still being worked on.
+        .or(`status.in.(requested,options),and(status.eq.scheduled,starts_at.gte.${new Date().toISOString()})`)
         .order("starts_at")
         .limit(6),
     ]);
@@ -228,7 +229,12 @@ export default function DashboardPage() {
             </CardHeader>
             <CardContent className="space-y-2">
               {data.appts.length === 0 && <p className="text-sm text-muted-foreground">No upcoming appointments.</p>}
-              {data.appts.map((a) => (
+              {data.appts
+                .filter((a) => a.status === "options")
+                .map((a) => (
+                  <BookingOptions key={a.id} appt={a} petName={petName(a.pet_id)} onDone={() => reload()} />
+                ))}
+              {data.appts.filter((a) => a.status !== "options").map((a) => (
                 <Link
                   key={a.id}
                   href={`/pets/${a.pet_id}?tab=appointments`}

@@ -81,7 +81,7 @@ export function PetDetail({ id, initialTab }: { id: string; initialTab: string }
   const { pet } = data;
   const pets = [pet];
   const now = new Date().toISOString();
-  const isOpen = (a: Appointment) => a.status === "scheduled" || a.status === "requested";
+  const isOpen = (a: Appointment) => ["scheduled", "requested", "options"].includes(a.status);
   const upcoming = data.appts.filter((a) => a.starts_at >= now && isOpen(a)).reverse();
   const past = data.appts.filter((a) => a.starts_at < now || !isOpen(a));
 
@@ -422,10 +422,10 @@ function ApptRow({
             <span
               className={cn(
                 "ml-2 rounded-full bg-muted px-2 py-0.5 text-xs font-normal capitalize",
-                a.status === "requested" && "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                (a.status === "requested" || a.status === "options") && "bg-amber-500/15 text-amber-700 dark:text-amber-300"
               )}
             >
-              {a.status === "requested" ? "Awaiting clinic" : a.status}
+              {a.status === "requested" ? "Awaiting clinic" : a.status === "options" ? "Pick a time on Today" : a.status}
             </span>
           )}
         </p>

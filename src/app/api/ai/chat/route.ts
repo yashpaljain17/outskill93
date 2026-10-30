@@ -23,7 +23,7 @@ const MAX_TOOL_ROUNDS = 5;
 /**
  * Streams newline-delimited JSON events:
  *   {"type":"text","text":"..."} | {"type":"action","label":"...","href":"..."}
- *   {"type":"status","text":"..."} | {"type":"error","message":"..."} | {"type":"done"}
+ *   {"type":"status","text":"..."} | {"type":"booking","id":"..."} | {"type":"error","message":"..."} | {"type":"done"}
  */
 export async function POST(req: Request) {
   const session = await getUserClient();
@@ -44,7 +44,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: message }, { status });
   }
 
-  const { supabase } = session;
+  const { supabase, user } = session;
+  const origin = new URL(req.url).origin;
   const { text: petContext, pets } = await buildPetContext(supabase, petId);
   const petIds = new Set(pets.map((p) => p.id));
 
@@ -55,7 +56,9 @@ export async function POST(req: Request) {
   const system = `You are PawPal, a friendly pet care assistant inside a pet care app. You help owners with day-to-day care questions and keep their pet records up to date.
 
 ${SAFETY_RULES}
-- You can add routines, appointments and vaccinations, and turn care instructions into checklists, using your tools. Only do that when the owner asks for it or clearly agrees. If a needed detail (which pet, the time) is missing and you can't infer it, ask a short question first.
+- You can add routines, appointments and vaccinations, and turn care instructions into checklists, using your tools.
+- To book a vet visit, use request_vet_booking: it negotiates with partner clinics using the owner's Google Calendar. Use add_appointment only to record a visit whose time is already confirmed. If the owner gives no dates, use the next 7 days; if no time of day, use "any". Ask which pet only if it's unclear.
+- When a booking under "Bookings in progress" has options and the owner picks one ("yes", "the first one", "Wednesday works"), call respond_to_booking_options with that option number (0 if they say no to all). If they just say "yes" and there is only one option, that's option 1. Only do that when the owner asks for it or clearly agrees. If a needed detail (which pet, the time) is missing and you can't infer it, ask a short question first.
 - If the owner has one pet, assume questions are about that pet.
 - After using a tool, confirm briefly what you saved.
 ${
@@ -112,8 +115,9 @@ ${petContext}`;
           const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];
           for (const use of toolUses) {
             send({ type: "status", text: statusLabel(use.name) });
-            const outcome = await runAssistantTool(use.name, use.input, { supabase, petIds, petContext });
+            const outcome = await runAssistantTool(use.name, use.input, { supabase, user, origin, petIds, petContext });
             if (outcome.action) send({ type: "action", ...outcome.action });
+            if (outcome.booking) send({ type: "booking", id: outcome.booking });
             results.push({
               type: "tool_result",
               tool_use_id: use.id,
@@ -149,6 +153,10 @@ function statusLabel(tool: string) {
       return "Saving vaccination…";
     case "create_checklist":
       return "Building checklist…";
+    case "request_vet_booking":
+      return "Contacting clinics…";
+    case "respond_to_booking_options":
+      return "Booking your choice…";
     default:
       return "Working…";
   }

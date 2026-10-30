@@ -5,82 +5,723 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "pawpal-booking",
+        "authentication": "headerAuth",
         "options": {}
       },
-      "id": "a1f0c7b2-0001-4a6e-9a01-000000000001",
+      "id": "7a1c0d2e-0000-4000-8000-000000000002",
       "name": "Booking request",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [0, 0],
-      "webhookId": "pawpal-booking"
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "7a1c0d2e-0000-4000-8000-000000000001",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pawpalSecretHeader",
+          "name": "PawPal secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Slot matching for the PawPal booking workflow.\n// These functions are embedded into the workflow's Code nodes by build-workflow.mjs,\n// and tested locally with `node n8n/match-slots.test.mjs`. Keep them dependency-free.\n\nconst DAY_MS = 86400000;\nconst TIME_OF_DAY_RANGES = { morning: [480, 720], afternoon: [720, 1020], evening: [1020, 1260] };\n\n/** Weekday (0 = Sunday) and minutes after midnight of an instant, in a time zone. */\nfunction localParts(iso, tz) {\n  const parts = new Intl.DateTimeFormat(\"en-GB\", {\n    timeZone: tz,\n    weekday: \"short\",\n    hour: \"2-digit\",\n    minute: \"2-digit\",\n    hourCycle: \"h23\",\n    year: \"numeric\",\n    month: \"2-digit\",\n    day: \"2-digit\",\n  }).formatToParts(new Date(iso));\n  const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));\n  return {\n    dow: [\"Sun\", \"Mon\", \"Tue\", \"Wed\", \"Thu\", \"Fri\", \"Sat\"].indexOf(p.weekday),\n    minutes: Number(p.hour) * 60 + Number(p.minute),\n    day: `${p.year}-${p.month}-${p.day}`,\n  };\n}\n\n/** The range to search: the requested window, extended to a week so alternatives can be offered. */\nfunction planSearch(req, nowIso) {\n  const now = Date.parse(nowIso);\n  const from = Math.max(now, Date.parse(req.window.from));\n  const to = Math.max(Date.parse(req.window.to), from + 7 * DAY_MS);\n  return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };\n}\n\n/**\n * Overlaps the owner's busy calendar with the clinics' free doctor slots.\n * Returns { decision: \"book\", slot } when a slot fits the requested window,\n * { decision: \"options\", options } with up to 3 alternatives, or { decision: \"none\" }.\n */\nfunction matchSlots(req, busy, clinics, nowIso) {\n  const tz = req.timezone || \"Asia/Kolkata\";\n  const duration = req.duration_minutes || 30;\n  const buffer = req.buffer_minutes || 15;\n  const hours = req.bookable_hours || { start: \"09:00\", end: \"20:00\", days: [1, 2, 3, 4, 5, 6] };\n  const toMinutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));\n  const now = Date.parse(nowIso);\n  const busyMs = (busy || []).map((b) => [Date.parse(b.start), Date.parse(b.end)]);\n\n  const all = [];\n  clinics.forEach((c, order) =>\n    (c.slots || []).forEach((s) =>\n      all.push({\n        clinic_id: c.clinic_id,\n        clinic_name: c.clinic_name,\n        address: c.address ?? null,\n        reserve_url: c.reserve_url,\n        doctor_id: s.doctor_id,\n        doctor_name: s.doctor_name,\n        starts_at: s.starts_at,\n        ends_at: s.ends_at,\n        _order: order,\n        _local: localParts(s.starts_at, tz),\n      })\n    )\n  );\n\n  // Slots inside the owner's bookable hours that don't clash with their calendar (with travel buffer).\n  const free = all\n    .filter((s) => {\n      const start = Date.parse(s.starts_at);\n      if (start < now + 3600000) return false;\n      if (!hours.days.includes(s._local.dow)) return false;\n      if (s._local.minutes < toMinutes(hours.start) || s._local.minutes + duration > toMinutes(hours.end)) return false;\n      const from = start - buffer * 60000;\n      const to = start + (duration + buffer) * 60000;\n      return !busyMs.some(([bs, be]) => bs < to && be > from);\n    })\n    .sort((a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at) || a._order - b._order);\n\n  const w = req.window || {};\n  const windowFrom = Date.parse(w.from);\n  const windowTo = Date.parse(w.to);\n  const timeOfDay = w.time_of_day || \"any\";\n  const range = TIME_OF_DAY_RANGES[timeOfDay];\n  const inTimeOfDay = (s) => !range || (s._local.minutes >= range[0] && s._local.minutes < range[1]);\n  const preferred = w.preferred_at ? Date.parse(w.preferred_at) : null;\n  const distance = (s) => Math.abs(Date.parse(s.starts_at) - preferred);\n  const clean = ({ _order, _local, ...slot }) => slot;\n\n  let matches = free.filter((s) => {\n    const t = Date.parse(s.starts_at);\n    return t >= windowFrom && t <= windowTo && inTimeOfDay(s);\n  });\n  if (preferred) matches = matches.filter((s) => distance(s) <= 3600000).sort((a, b) => distance(a) - distance(b));\n  if (matches.length) return { decision: \"book\", slot: clean(matches[0]), options: [] };\n\n  // Alternatives: closest to the preferred time if there was one, otherwise the requested time of\n  // day first, then earliest. One per day while possible, so the owner gets real choices.\n  const ranked = [...free].sort((a, b) =>\n    preferred\n      ? distance(a) - distance(b)\n      : Number(inTimeOfDay(b)) - Number(inTimeOfDay(a)) || Date.parse(a.starts_at) - Date.parse(b.starts_at)\n  );\n  const options = [];\n  const days = new Set();\n  for (const s of ranked) {\n    if (options.length === 3) break;\n    if (days.has(s._local.day)) continue;\n    days.add(s._local.day);\n    options.push(s);\n  }\n  for (const s of ranked) {\n    if (options.length === 3) break;\n    if (!options.includes(s)) options.push(s);\n  }\n  options.sort((a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at));\n  return options.length ? { decision: \"options\", slot: null, options: options.map(clean) } : { decision: \"none\", slot: null, options: [] };\n}\n\n\nconst req = $('Booking request').first().json.body;\nconst range = planSearch(req, new Date().toISOString());\nconst partner = (req.clinics || []).filter((c) => c.availability_url);\nreturn [{ json: { ...range, partner_clinics: partner.length } }];"
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000003",
+      "name": "Plan search",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
-              "id": "c1",
-              "leftValue": "={{ $json.headers['x-pawpal-secret'] }}",
-              "rightValue": "REPLACE_WITH_N8N_WEBHOOK_SECRET",
-              "operator": { "type": "string", "operation": "equals" }
+              "id": "7a1c0d2e-0000-4000-8000-000000000004",
+              "leftValue": "={{ $json.partner_clinics }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
             }
           ],
           "combinator": "and"
         },
         "options": {}
       },
-      "id": "a1f0c7b2-0002-4a6e-9a01-000000000002",
-      "name": "Secret matches?",
+      "id": "7a1c0d2e-0000-4000-8000-000000000005",
+      "name": "Any partner clinic?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [220, 0]
-    },
-    {
-      "parameters": {},
-      "id": "a1f0c7b2-0003-4a6e-9a01-000000000003",
-      "name": "Contact clinic (replace me)",
-      "type": "n8n-nodes-base.noOp",
-      "typeVersion": 1,
-      "position": [440, -100]
+      "position": [
+        440,
+        0
+      ]
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $('Booking request').item.json.body.callback.url }}",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [{ "name": "X-PawPal-Secret", "value": "REPLACE_WITH_N8N_WEBHOOK_SECRET" }]
-        },
+        "url": "https://www.googleapis.com/calendar/v3/freeBusy",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleCalendarOAuth2Api",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ token: $('Booking request').item.json.body.callback.token, status: 'confirmed', starts_at: $('Booking request').item.json.body.requested_at, note: 'Confirmed by the clinic' }) }}",
+        "jsonBody": "={{ JSON.stringify({ timeMin: $json.from, timeMax: $json.to, timeZone: $('Booking request').first().json.body.timezone, items: [{ id: $('Booking request').first().json.body.calendar_id }] }) }}",
         "options": {}
       },
-      "id": "a1f0c7b2-0004-4a6e-9a01-000000000004",
-      "name": "Confirm in PawPal",
+      "id": "7a1c0d2e-0000-4000-8000-000000000006",
+      "name": "Check my calendar",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [660, -100]
+      "position": [
+        660,
+        -100
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "yOQWM5g6j363AGfT",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const req = $('Booking request').first().json.body;\nconst plan = $('Plan search').first().json;\nreturn (req.clinics || [])\n  .filter((c) => c.availability_url)\n  .map((c) => ({ json: { url: c.availability_url, clinic_id: c.clinic_id, from: plan.from, to: plan.to } }));"
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000007",
+      "name": "Clinics to ask",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "from",
+              "value": "={{ $json.from }}"
+            },
+            {
+              "name": "to",
+              "value": "={{ $json.to }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000008",
+      "name": "Ask clinic for doctor slots",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1100,
+        -100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pawpalSecretHeader",
+          "name": "PawPal secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Slot matching for the PawPal booking workflow.\n// These functions are embedded into the workflow's Code nodes by build-workflow.mjs,\n// and tested locally with `node n8n/match-slots.test.mjs`. Keep them dependency-free.\n\nconst DAY_MS = 86400000;\nconst TIME_OF_DAY_RANGES = { morning: [480, 720], afternoon: [720, 1020], evening: [1020, 1260] };\n\n/** Weekday (0 = Sunday) and minutes after midnight of an instant, in a time zone. */\nfunction localParts(iso, tz) {\n  const parts = new Intl.DateTimeFormat(\"en-GB\", {\n    timeZone: tz,\n    weekday: \"short\",\n    hour: \"2-digit\",\n    minute: \"2-digit\",\n    hourCycle: \"h23\",\n    year: \"numeric\",\n    month: \"2-digit\",\n    day: \"2-digit\",\n  }).formatToParts(new Date(iso));\n  const p = Object.fromEntries(parts.map((x) => [x.type, x.value]));\n  return {\n    dow: [\"Sun\", \"Mon\", \"Tue\", \"Wed\", \"Thu\", \"Fri\", \"Sat\"].indexOf(p.weekday),\n    minutes: Number(p.hour) * 60 + Number(p.minute),\n    day: `${p.year}-${p.month}-${p.day}`,\n  };\n}\n\n/** The range to search: the requested window, extended to a week so alternatives can be offered. */\nfunction planSearch(req, nowIso) {\n  const now = Date.parse(nowIso);\n  const from = Math.max(now, Date.parse(req.window.from));\n  const to = Math.max(Date.parse(req.window.to), from + 7 * DAY_MS);\n  return { from: new Date(from).toISOString(), to: new Date(to).toISOString() };\n}\n\n/**\n * Overlaps the owner's busy calendar with the clinics' free doctor slots.\n * Returns { decision: \"book\", slot } when a slot fits the requested window,\n * { decision: \"options\", options } with up to 3 alternatives, or { decision: \"none\" }.\n */\nfunction matchSlots(req, busy, clinics, nowIso) {\n  const tz = req.timezone || \"Asia/Kolkata\";\n  const duration = req.duration_minutes || 30;\n  const buffer = req.buffer_minutes || 15;\n  const hours = req.bookable_hours || { start: \"09:00\", end: \"20:00\", days: [1, 2, 3, 4, 5, 6] };\n  const toMinutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));\n  const now = Date.parse(nowIso);\n  const busyMs = (busy || []).map((b) => [Date.parse(b.start), Date.parse(b.end)]);\n\n  const all = [];\n  clinics.forEach((c, order) =>\n    (c.slots || []).forEach((s) =>\n      all.push({\n        clinic_id: c.clinic_id,\n        clinic_name: c.clinic_name,\n        address: c.address ?? null,\n        reserve_url: c.reserve_url,\n        doctor_id: s.doctor_id,\n        doctor_name: s.doctor_name,\n        starts_at: s.starts_at,\n        ends_at: s.ends_at,\n        _order: order,\n        _local: localParts(s.starts_at, tz),\n      })\n    )\n  );\n\n  // Slots inside the owner's bookable hours that don't clash with their calendar (with travel buffer).\n  const free = all\n    .filter((s) => {\n      const start = Date.parse(s.starts_at);\n      if (start < now + 3600000) return false;\n      if (!hours.days.includes(s._local.dow)) return false;\n      if (s._local.minutes < toMinutes(hours.start) || s._local.minutes + duration > toMinutes(hours.end)) return false;\n      const from = start - buffer * 60000;\n      const to = start + (duration + buffer) * 60000;\n      return !busyMs.some(([bs, be]) => bs < to && be > from);\n    })\n    .sort((a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at) || a._order - b._order);\n\n  const w = req.window || {};\n  const windowFrom = Date.parse(w.from);\n  const windowTo = Date.parse(w.to);\n  const timeOfDay = w.time_of_day || \"any\";\n  const range = TIME_OF_DAY_RANGES[timeOfDay];\n  const inTimeOfDay = (s) => !range || (s._local.minutes >= range[0] && s._local.minutes < range[1]);\n  const preferred = w.preferred_at ? Date.parse(w.preferred_at) : null;\n  const distance = (s) => Math.abs(Date.parse(s.starts_at) - preferred);\n  const clean = ({ _order, _local, ...slot }) => slot;\n\n  let matches = free.filter((s) => {\n    const t = Date.parse(s.starts_at);\n    return t >= windowFrom && t <= windowTo && inTimeOfDay(s);\n  });\n  if (preferred) matches = matches.filter((s) => distance(s) <= 3600000).sort((a, b) => distance(a) - distance(b));\n  if (matches.length) return { decision: \"book\", slot: clean(matches[0]), options: [] };\n\n  // Alternatives: closest to the preferred time if there was one, otherwise the requested time of\n  // day first, then earliest. One per day while possible, so the owner gets real choices.\n  const ranked = [...free].sort((a, b) =>\n    preferred\n      ? distance(a) - distance(b)\n      : Number(inTimeOfDay(b)) - Number(inTimeOfDay(a)) || Date.parse(a.starts_at) - Date.parse(b.starts_at)\n  );\n  const options = [];\n  const days = new Set();\n  for (const s of ranked) {\n    if (options.length === 3) break;\n    if (days.has(s._local.day)) continue;\n    days.add(s._local.day);\n    options.push(s);\n  }\n  for (const s of ranked) {\n    if (options.length === 3) break;\n    if (!options.includes(s)) options.push(s);\n  }\n  options.sort((a, b) => Date.parse(a.starts_at) - Date.parse(b.starts_at));\n  return options.length ? { decision: \"options\", slot: null, options: options.map(clean) } : { decision: \"none\", slot: null, options: [] };\n}\n\n\nconst req = $('Booking request').first().json.body;\nconst calendar = $('Check my calendar').first().json;\nconst calendars = calendar.calendars || {};\nconst busy = (calendars[req.calendar_id] || Object.values(calendars)[0] || {}).busy || [];\nconst clinics = $input.all().map((i) => i.json).filter((j) => Array.isArray(j.slots));\nconst result = matchSlots(req, busy, clinics, new Date().toISOString());\nreturn [{ json: { ...result, callback: req.callback, reason: req.reason, notes: req.notes, pet: req.pet, owner: req.owner, timezone: req.timezone, calendar_id: req.calendar_id, busy_count: busy.length, clinics_answered: clinics.length } }];"
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000009",
+      "name": "Match slots",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "7a1c0d2e-0000-4000-8000-000000000010",
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "book",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000011",
+      "name": "Slot fits?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const m = $input.first().json;\nreturn [{ json: { callback: m.callback, slot: m.slot, reason: m.reason, notes: m.notes, pet: m.pet, owner: m.owner, timezone: m.timezone, calendar_id: m.calendar_id } }];"
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000012",
+      "name": "Prepare booking",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "7a1c0d2e-0000-4000-8000-000000000013",
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "options",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000014",
+      "name": "Any options?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ token: $json.callback.token, status: 'options', options: $json.options, note: 'Requested time not available' }) }}",
+        "options": {}
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000015",
+      "name": "Offer options to owner",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        -40
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pawpalSecretHeader",
+          "name": "PawPal secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.callback.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ token: $json.callback.token, status: 'declined', note: 'No free slots in the next 7 days fit your calendar. Try a different week.' }) }}",
+        "options": {}
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000016",
+      "name": "No slots available",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1980,
+        120
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pawpalSecretHeader",
+          "name": "PawPal secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Booking request').first().json.body.callback.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ token: $('Booking request').first().json.body.callback.token, status: 'declined', note: ($('Booking request').first().json.body.clinics?.[0]?.name || 'This clinic') + \" doesn't take online bookings yet\" + ($('Booking request').first().json.body.clinics?.[0]?.phone ? '. Call ' + $('Booking request').first().json.body.clinics[0].phone : '') + '.' }) }}",
+        "options": {}
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000017",
+      "name": "Clinic not online",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        660,
+        140
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pawpalSecretHeader",
+          "name": "PawPal secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pawpal-booking-choice",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000019",
+      "name": "Owner's choice",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        340
+      ],
+      "webhookId": "7a1c0d2e-0000-4000-8000-000000000018",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pawpalSecretHeader",
+          "name": "PawPal secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const b = $('Owner\\'s choice').first().json.body;\nreturn [{ json: { callback: b.callback, slot: b.slot, reason: b.reason, notes: b.notes, pet: b.pet, owner: b.owner, timezone: b.timezone, calendar_id: b.calendar_id } }];"
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000020",
+      "name": "Prepare choice",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        340
+      ]
     },
     {
       "parameters": {},
-      "id": "a1f0c7b2-0005-4a6e-9a01-000000000005",
-      "name": "Reject",
+      "id": "7a1c0d2e-0000-4000-8000-000000000021",
+      "name": "Booking to confirm",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "position": [440, 100]
+      "position": [
+        2000,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.slot.reserve_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ token: $json.callback.token, doctor_id: $json.slot.doctor_id, starts_at: $json.slot.starts_at }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000022",
+      "name": "Reserve slot at clinic",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2220,
+        -200
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pawpalSecretHeader",
+          "name": "PawPal secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "7a1c0d2e-0000-4000-8000-000000000023",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000024",
+      "name": "Reserved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://www.googleapis.com/calendar/v3/calendars/' + encodeURIComponent($('Booking to confirm').item.json.calendar_id || 'primary') + '/events' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleCalendarOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  summary: '🐾 ' + ($('Booking to confirm').item.json.pet?.name || 'Pet') + ': ' + $('Booking to confirm').item.json.reason,\n  location: [$('Booking to confirm').item.json.slot.clinic_name, $('Booking to confirm').item.json.slot.address].filter(Boolean).join(', '),\n  description: 'With ' + $('Booking to confirm').item.json.slot.doctor_name + '. Booked by PawPal.' + ($('Booking to confirm').item.json.notes ? '\\n\\nNotes: ' + $('Booking to confirm').item.json.notes : ''),\n  start: { dateTime: $('Booking to confirm').item.json.slot.starts_at, timeZone: $('Booking to confirm').item.json.timezone },\n  end: { dateTime: $('Booking to confirm').item.json.slot.ends_at, timeZone: $('Booking to confirm').item.json.timezone },\n  reminders: { useDefault: true }\n}) }}",
+        "options": {}
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000025",
+      "name": "Add to Google Calendar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2660,
+        -300
+      ],
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "yOQWM5g6j363AGfT",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Booking to confirm').item.json.callback.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ token: $('Booking to confirm').item.json.callback.token, status: 'confirmed', starts_at: $('Booking to confirm').item.json.slot.starts_at, location: [$('Booking to confirm').item.json.slot.clinic_name, $('Booking to confirm').item.json.slot.address].filter(Boolean).join(', '), note: 'With ' + $('Booking to confirm').item.json.slot.doctor_name + '. Added to Google Calendar.' }) }}",
+        "options": {}
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000026",
+      "name": "Confirm in PawPal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2880,
+        -300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pawpalSecretHeader",
+          "name": "PawPal secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Booking to confirm').item.json.callback.url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ token: $('Booking to confirm').item.json.callback.token, status: 'declined', note: 'That slot was just taken by someone else. Ask PawPal to try again.' }) }}",
+        "options": {}
+      },
+      "id": "7a1c0d2e-0000-4000-8000-000000000027",
+      "name": "Slot just taken",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2660,
+        -100
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "pawpalSecretHeader",
+          "name": "PawPal secret"
+        }
+      }
     }
   ],
   "connections": {
-    "Booking request": { "main": [[{ "node": "Secret matches?", "type": "main", "index": 0 }]] },
-    "Secret matches?": {
+    "Booking request": {
       "main": [
-        [{ "node": "Contact clinic (replace me)", "type": "main", "index": 0 }],
-        [{ "node": "Reject", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Plan search",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
-    "Contact clinic (replace me)": { "main": [[{ "node": "Confirm in PawPal", "type": "main", "index": 0 }]] }
+    "Plan search": {
+      "main": [
+        [
+          {
+            "node": "Any partner clinic?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any partner clinic?": {
+      "main": [
+        [
+          {
+            "node": "Check my calendar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Clinic not online",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check my calendar": {
+      "main": [
+        [
+          {
+            "node": "Clinics to ask",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clinics to ask": {
+      "main": [
+        [
+          {
+            "node": "Ask clinic for doctor slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask clinic for doctor slots": {
+      "main": [
+        [
+          {
+            "node": "Match slots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match slots": {
+      "main": [
+        [
+          {
+            "node": "Slot fits?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slot fits?": {
+      "main": [
+        [
+          {
+            "node": "Prepare booking",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Any options?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any options?": {
+      "main": [
+        [
+          {
+            "node": "Offer options to owner",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No slots available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare booking": {
+      "main": [
+        [
+          {
+            "node": "Booking to confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Owner's choice": {
+      "main": [
+        [
+          {
+            "node": "Prepare choice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare choice": {
+      "main": [
+        [
+          {
+            "node": "Booking to confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Booking to confirm": {
+      "main": [
+        [
+          {
+            "node": "Reserve slot at clinic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserve slot at clinic": {
+      "main": [
+        [
+          {
+            "node": "Reserved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserved?": {
+      "main": [
+        [
+          {
+            "node": "Add to Google Calendar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slot just taken",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to Google Calendar": {
+      "main": [
+        [
+          {
+            "node": "Confirm in PawPal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
   },
-  "settings": { "executionOrder": "v1" }
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Kolkata"
+  },
+  "pinData": {}
 }
