@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { CalendarHeart, ClipboardCheck, LogOut, MessagesSquare, PawPrint, Sparkles } from "lucide-react";
+import { CalendarHeart, ClipboardCheck, LogOut, MapPin, MessagesSquare, PawPrint, Sparkles } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Logo } from "@/components/app/logo";
 import { useSupabase, useUser } from "@/hooks/use-supabase";
@@ -12,6 +12,7 @@ const NAV = [
   { href: "/dashboard", label: "Today", icon: CalendarHeart },
   { href: "/pets", label: "Pets", icon: PawPrint },
   { href: "/checklists", label: "Checklists", icon: ClipboardCheck },
+  { href: "/nearby", label: "Nearby", icon: MapPin },
   { href: "/community", label: "Community", icon: MessagesSquare },
   { href: "/assistant", label: "Assistant", icon: Sparkles },
 ];
@@ -74,7 +75,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-28 pt-6 md:pb-12">{children}</main>
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/90 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
-        <div className="mx-auto grid max-w-md grid-cols-5">
+        <div className="mx-auto grid max-w-lg grid-cols-6">
           {NAV.map((item) => {
             const active = pathname === item.href || pathname.startsWith(item.href + "/");
             return (

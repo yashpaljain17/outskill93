@@ -1,0 +1,86 @@
+{
+  "name": "PawPal – vet booking",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pawpal-booking",
+        "options": {}
+      },
+      "id": "a1f0c7b2-0001-4a6e-9a01-000000000001",
+      "name": "Booking request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "pawpal-booking"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.headers['x-pawpal-secret'] }}",
+              "rightValue": "REPLACE_WITH_N8N_WEBHOOK_SECRET",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1f0c7b2-0002-4a6e-9a01-000000000002",
+      "name": "Secret matches?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {},
+      "id": "a1f0c7b2-0003-4a6e-9a01-000000000003",
+      "name": "Contact clinic (replace me)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [440, -100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Booking request').item.json.body.callback.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "X-PawPal-Secret", "value": "REPLACE_WITH_N8N_WEBHOOK_SECRET" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ token: $('Booking request').item.json.body.callback.token, status: 'confirmed', starts_at: $('Booking request').item.json.body.requested_at, note: 'Confirmed by the clinic' }) }}",
+        "options": {}
+      },
+      "id": "a1f0c7b2-0004-4a6e-9a01-000000000004",
+      "name": "Confirm in PawPal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, -100]
+    },
+    {
+      "parameters": {},
+      "id": "a1f0c7b2-0005-4a6e-9a01-000000000005",
+      "name": "Reject",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [440, 100]
+    }
+  ],
+  "connections": {
+    "Booking request": { "main": [[{ "node": "Secret matches?", "type": "main", "index": 0 }]] },
+    "Secret matches?": {
+      "main": [
+        [{ "node": "Contact clinic (replace me)", "type": "main", "index": 0 }],
+        [{ "node": "Reject", "type": "main", "index": 0 }]
+      ]
+    },
+    "Contact clinic (replace me)": { "main": [[{ "node": "Confirm in PawPal", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

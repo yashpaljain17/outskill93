@@ -9,17 +9,19 @@ PawPal keeps your pets' care organised and uses AI to turn care instructions int
 - **AI checklists**: paste a vet's discharge notes and get an editable, step-by-step checklist (powered by Claude structured outputs). Repeating steps can become routines automatically.
 - **AI assistant**: a chat that knows your pets' records and can add routines, appointments, vaccinations and checklists for you
 - **Voice agent**: a hands-free voice conversation, using ElevenLabs speech-to-text and text-to-speech, with the browser's built-in speech as a fallback
+- **Nearby**: vet clinics and dog parks on a map around you, with directions, call and website links (free OpenStreetMap data, no API key)
+- **Vet booking via n8n**: request a visit at a nearby clinic; an [n8n workflow](n8n/README.md) contacts the clinic and confirms back into the app
 - **Community**: Q&A with upvotes, accepted answers, live updates and an instant AI suggestion on every question
 - **Guest mode**, so judges can try the app without signing up
 
-**Stack:** Next.js 16 (App Router) · TypeScript · Tailwind CSS v4 · shadcn/ui · Supabase (Postgres, Auth, Row Level Security, Storage, Realtime) · Anthropic Claude (`claude-opus-5-5`) · ElevenLabs
+**Stack:** Next.js 16 (App Router) · TypeScript · Tailwind CSS v4 · shadcn/ui · Supabase (Postgres, Auth, Row Level Security, Storage, Realtime) · Anthropic Claude (`claude-opus-5-5`) · ElevenLabs · Leaflet + OpenStreetMap · n8n
 
 ---
 
 ## 1. Create the Supabase project (free tier)
 
 1. Go to <https://supabase.com/dashboard> and create a project.
-2. Open **SQL Editor → New query**, paste the whole of [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) and click **Run**. This creates all tables, row-level security policies, the `pet-photos` storage bucket and realtime settings.
+2. Open **SQL Editor → New query**, paste the whole of [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) and click **Run**. Then do the same with [`0002_bookings.sql`](supabase/migrations/0002_bookings.sql) (vet booking requests) and [`0003_master_data.sql`](supabase/migrations/0003_master_data.sql) (a Bengaluru vet clinic directory, five demo users with pets, routines, vaccinations, appointments and community Q&A). The demo logins are listed at the top of `0003_master_data.sql`. This creates all tables, row-level security policies, the `pet-photos` storage bucket and realtime settings.
 3. **Authentication → Sign In / Providers**:
    - Turn on **Allow anonymous sign-ins** (powers "Continue as guest").
    - For a smooth demo, turn off **Confirm email** under the Email provider. If you leave it on, users must click the link in their email first.

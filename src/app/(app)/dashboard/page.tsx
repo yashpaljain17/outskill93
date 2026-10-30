@@ -35,7 +35,7 @@ export default function DashboardPage() {
       supabase
         .from("appointments")
         .select("*")
-        .eq("status", "scheduled")
+        .in("status", ["scheduled", "requested"])
         .gte("starts_at", new Date().toISOString())
         .order("starts_at")
         .limit(6),
@@ -239,7 +239,14 @@ export default function DashboardPage() {
                     <span className="font-heading text-lg font-semibold">{format(new Date(a.starts_at), "d")}</span>
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{a.title}</span>
+                    <span className="block truncate font-medium">
+                      {a.status === "requested" && (
+                        <span className="mr-1.5 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-700 dark:text-amber-300">
+                          Awaiting clinic
+                        </span>
+                      )}
+                      {a.title}
+                    </span>
                     <span className="block text-xs text-muted-foreground">
                       {petName(a.pet_id)} · {format(new Date(a.starts_at), "EEE h:mm a")} ·{" "}
                       {formatDistanceToNowStrict(new Date(a.starts_at), { addSuffix: true })}

@@ -81,8 +81,9 @@ export function PetDetail({ id, initialTab }: { id: string; initialTab: string }
   const { pet } = data;
   const pets = [pet];
   const now = new Date().toISOString();
-  const upcoming = data.appts.filter((a) => a.starts_at >= now && a.status === "scheduled").reverse();
-  const past = data.appts.filter((a) => a.starts_at < now || a.status !== "scheduled");
+  const isOpen = (a: Appointment) => a.status === "scheduled" || a.status === "requested";
+  const upcoming = data.appts.filter((a) => a.starts_at >= now && isOpen(a)).reverse();
+  const past = data.appts.filter((a) => a.starts_at < now || !isOpen(a));
 
   async function remove(table: string, rowId: string, label: string) {
     if (!confirm(`Delete this ${label}?`)) return;
@@ -418,7 +419,14 @@ function ApptRow({
         <p className="font-medium">
           {a.title}
           {a.status !== "scheduled" && (
-            <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-xs font-normal capitalize">{a.status}</span>
+            <span
+              className={cn(
+                "ml-2 rounded-full bg-muted px-2 py-0.5 text-xs font-normal capitalize",
+                a.status === "requested" && "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+              )}
+            >
+              {a.status === "requested" ? "Awaiting clinic" : a.status}
+            </span>
           )}
         </p>
         <p className="text-xs text-muted-foreground">

@@ -67,7 +67,7 @@ export interface Appointment {
   starts_at: string;
   location: string | null;
   notes: string | null;
-  status: "scheduled" | "done" | "cancelled";
+  status: "requested" | "scheduled" | "done" | "cancelled";
 }
 
 export interface Checklist {
