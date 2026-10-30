@@ -27,6 +27,9 @@ export const ChecklistDraftSchema = z.object({
 
 export type ChecklistDraft = z.infer<typeof ChecklistDraftSchema>;
 
+/** An error whose message is safe to show to the user. */
+export class ChecklistError extends Error {}
+
 export async function generateChecklist(instructions: string, petContext: string) {
   const client = getAnthropic();
   const response = await client.beta.messages.parse({
@@ -55,10 +58,10 @@ ${petContext}`,
   });
 
   if (response.stop_reason === "refusal") {
-    throw new Error("The AI declined to process these instructions.");
+    throw new ChecklistError("The AI declined to process these instructions.");
   }
   if (!response.parsed_output) {
-    throw new Error("The AI response could not be parsed into a checklist.");
+    throw new ChecklistError("The AI response could not be parsed into a checklist.");
   }
   return response.parsed_output;
 }

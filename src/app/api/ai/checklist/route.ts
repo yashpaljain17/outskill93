@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getUserClient } from "@/lib/supabase/server";
 import { buildPetContext } from "@/lib/ai/pet-context";
-import { generateChecklist } from "@/lib/ai/checklist";
+import { ChecklistError, generateChecklist } from "@/lib/ai/checklist";
 import { aiErrorMessage } from "@/lib/ai/claude";
 
 export const maxDuration = 120;
@@ -28,6 +28,6 @@ export async function POST(req: Request) {
   } catch (err) {
     const { message, status } = aiErrorMessage(err);
     console.error("checklist generation failed", err);
-    return NextResponse.json({ error: err instanceof Error && status === 500 ? err.message : message }, { status });
+    return NextResponse.json({ error: err instanceof ChecklistError ? err.message : message }, { status });
   }
 }
