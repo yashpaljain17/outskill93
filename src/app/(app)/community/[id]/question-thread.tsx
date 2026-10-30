@@ -48,19 +48,22 @@ export function QuestionThread({ id }: { id: string }) {
     };
   }, [supabase, id, reload]);
 
-  // While a freshly posted question waits for its AI suggestion, poll briefly (realtime also covers it).
+  // While a freshly posted question waits for its AI suggestion, poll every 3 s (realtime also covers it).
   const aiPending = aiLoading && !data?.q?.ai_answer;
   useEffect(() => {
     if (!aiPending) return;
     const t = setTimeout(() => {
       reload();
     }, 3000);
-    const stop = setTimeout(() => setAiLoading(false), 60000);
-    return () => {
-      clearTimeout(t);
-      clearTimeout(stop);
-    };
+    return () => clearTimeout(t);
   }, [aiPending, data, reload]);
+
+  // Stop polling 60 s after aiLoading turns on; reloads don't restart this window.
+  useEffect(() => {
+    if (!aiLoading) return;
+    const stop = setTimeout(() => setAiLoading(false), 60000);
+    return () => clearTimeout(stop);
+  }, [aiLoading]);
 
   if (loading) return <Skeleton className="mx-auto h-96 max-w-3xl rounded-2xl" />;
   if (error && !data)
