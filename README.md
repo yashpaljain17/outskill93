@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🐾 PawPal — Pet Care Companion
 
-## Getting Started
+PawPal keeps your pets' care organised and uses AI to turn care instructions into checklists you can follow.
 
-First, run the development server:
+- **Pet profiles**: photo, breed, age, weight, allergies and notes
+- **Routines**: feeding, walks, medication and grooming on a daily **Today** list you tick off
+- **Health records**: vaccinations with due and overdue alerts
+- **Appointments**: vet, grooming and training visits
+- **AI checklists**: paste a vet's discharge notes and get an editable, step-by-step checklist (powered by Claude structured outputs). Repeating steps can become routines automatically.
+- **AI assistant**: a chat that knows your pets' records and can add routines, appointments, vaccinations and checklists for you
+- **Voice agent**: a hands-free voice conversation, using ElevenLabs speech-to-text and text-to-speech, with the browser's built-in speech as a fallback
+- **Community**: Q&A with upvotes, accepted answers, live updates and an instant AI suggestion on every question
+- **Guest mode**, so judges can try the app without signing up
+
+**Stack:** Next.js 16 (App Router) · TypeScript · Tailwind CSS v4 · shadcn/ui · Supabase (Postgres, Auth, Row Level Security, Storage, Realtime) · Anthropic Claude (`claude-opus-5-5`) · ElevenLabs
+
+---
+
+## 1. Create the Supabase project (free tier)
+
+1. Go to <https://supabase.com/dashboard> and create a project.
+2. Open **SQL Editor → New query**, paste the whole of [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) and click **Run**. This creates all tables, row-level security policies, the `pet-photos` storage bucket and realtime settings.
+3. **Authentication → Sign In / Providers**:
+   - Turn on **Allow anonymous sign-ins** (powers "Continue as guest").
+   - For a smooth demo, turn off **Confirm email** under the Email provider. If you leave it on, users must click the link in their email first.
+4. **Authentication → URL Configuration**: set **Site URL** to `http://localhost:3000` now, and to your deployed URL later. Add both to **Redirect URLs**.
+5. **Project Settings → API**: copy the **Project URL** and the **anon / publishable key**.
+
+## 2. Get the API keys
+
+- **Claude:** <https://console.anthropic.com> → API Keys
+- **ElevenLabs (optional, free tier):** <https://elevenlabs.io> → Profile → API Keys. It needs *Text to Speech* and *Speech to Text* access. Without it, voice falls back to the browser's built-in speech (Chrome, Edge or Safari).
+
+## 3. Run locally
 
 ```bash
+cp .env.example .env.local   # then fill in the values
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open <http://localhost:3000>. Sign up (or continue as a guest), then click **Load a sample pet** to fill the app with demo data.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 4. Deploy for public viewing (Vercel)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Push this folder to a GitHub repository.
+2. On <https://vercel.com/new>, import the repository (the framework is detected as Next.js).
+3. Add the same environment variables as in `.env.local`.
+4. Deploy, then add the Vercel URL to Supabase → Authentication → URL Configuration (Site URL and Redirect URLs).
 
-## Learn More
+---
 
-To learn more about Next.js, take a look at the following resources:
+## How the AI works
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Feature | Where | How |
+|---|---|---|
+| Instructions → checklist | `src/lib/ai/checklist.ts`, `/api/ai/checklist` | Claude structured output against a Zod schema (steps, frequency, times, duration, safety notes). The user reviews and edits the draft before anything is saved. |
+| Assistant chat | `/api/ai/chat`, `src/lib/ai/assistant-tools.ts` | Streams the reply. The pet records go in the system prompt. Tools (`add_routine`, `add_appointment`, `add_vaccination`, `create_checklist`) run with the signed-in user's Supabase session, so row-level security still applies. |
+| Community suggestion | `/api/ai/community` | A short first answer, stored on the question |
+| Voice | `src/hooks/use-voice.ts`, `/api/voice/*` | Silence detection on the mic, then ElevenLabs Scribe (speech-to-text), then the assistant, then ElevenLabs Flash (text-to-speech), then it listens again |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Safety: the prompts forbid inventing medication doses and tell the assistant to flag emergencies first. Warning signs are shown as a separate "confirm with your vet" panel. Requests use Claude's server-side refusal fallback.
 
-## Deploy on Vercel
+## Project layout
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+src/
+  app/
+    page.tsx                 landing
+    login/                   email/password + guest
+    (app)/dashboard          Today view
+    (app)/pets/[id]          profile · routines · vaccinations · appointments · checklists
+    (app)/checklists         list · new (AI builder) · [id] editor
+    (app)/community          Q&A feed · [id] thread
+    (app)/assistant          chat + voice mode
+    api/ai/*  api/voice/*    server routes (keys never reach the browser)
+  lib/ai/                    Claude client, prompts, tools
+supabase/migrations/         schema + RLS
+```
