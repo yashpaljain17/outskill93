@@ -21,7 +21,7 @@ PawPal keeps your pets' care organised and uses AI to turn care instructions int
 ## 1. Create the Supabase project (free tier)
 
 1. Go to <https://supabase.com/dashboard> and create a project.
-2. Open **SQL Editor → New query**, paste the whole of [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) and click **Run**. Then do the same with [`0002_bookings.sql`](supabase/migrations/0002_bookings.sql) (vet booking requests) and [`0003_master_data.sql`](supabase/migrations/0003_master_data.sql) (a Bengaluru vet clinic directory, five demo users with pets, routines, vaccinations, appointments and community Q&A), and finally [`0005_lock_ai_answer.sql`](supabase/migrations/0005_lock_ai_answer.sql) (stops users from writing the community AI suggestion themselves). The demo logins are listed at the top of `0003_master_data.sql`. This creates all tables, row-level security policies, the `pet-photos` storage bucket and realtime settings.
+2. Open **SQL Editor → New query**, paste the whole of [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) and click **Run**. Then do the same with [`0002_bookings.sql`](supabase/migrations/0002_bookings.sql) (vet booking requests), [`0003_master_data.sql`](supabase/migrations/0003_master_data.sql) (a Bengaluru vet clinic directory, five demo users with pets, routines, vaccinations, appointments and community Q&A), [`0005_lock_ai_answer.sql`](supabase/migrations/0005_lock_ai_answer.sql) (stops users from writing the community AI suggestion themselves) and finally [`0006_ai_rate_limit.sql`](supabase/migrations/0006_ai_rate_limit.sql) (AI usage limits for guests). The demo logins are listed at the top of `0003_master_data.sql`. This creates all tables, row-level security policies, the `pet-photos` storage bucket and realtime settings.
 3. **Authentication → Sign In / Providers**:
    - Turn on **Allow anonymous sign-ins** (powers "Continue as guest").
    - For a smooth demo, turn off **Confirm email** under the Email provider. If you leave it on, users must click the link in their email first.
@@ -61,7 +61,7 @@ Open <http://localhost:3000>. Sign up (or continue as a guest), then click **Loa
 | Community suggestion | `/api/ai/community` | A short first answer, stored on the question with the server-only service-role key |
 | Voice | `src/hooks/use-voice.ts`, `/api/voice/*` | Silence detection on the mic, then ElevenLabs Scribe (speech-to-text), then the assistant, then ElevenLabs Flash (text-to-speech), then it listens again |
 
-Safety: the prompts forbid inventing medication doses and tell the assistant to flag emergencies first. Warning signs are shown as a separate "confirm with your vet" panel. Requests use Claude's server-side refusal fallback.
+Safety: the prompts forbid inventing medication doses and tell the assistant to flag emergencies first. Warning signs are shown as a separate "confirm with your vet" panel. Requests use Claude's server-side refusal fallback. Guests are limited to 20 AI requests per hour and 300 per day across all guests combined, enforced in the `consume_ai_quota` database function; signed-up users are not limited.
 
 ## Project layout
 

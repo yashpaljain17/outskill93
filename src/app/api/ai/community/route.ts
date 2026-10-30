@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getUserClient } from "@/lib/supabase/server";
 import { getAdminClient } from "@/lib/supabase/admin";
 import { FALLBACK_BETA, MODEL, SAFETY_RULES, aiErrorMessage, getAnthropic } from "@/lib/ai/claude";
+import { guardAiQuota } from "@/lib/ai/rate-limit";
 
 export const maxDuration = 60;
 
@@ -33,6 +34,9 @@ export async function POST(req: Request) {
       { status: 503 }
     );
   }
+
+  const limited = await guardAiQuota(supabase, user, "community");
+  if (limited) return limited;
 
   try {
     const client = getAnthropic();

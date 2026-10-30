@@ -5,6 +5,7 @@ import { getUserClient } from "@/lib/supabase/server";
 import { buildPetContext } from "@/lib/ai/pet-context";
 import { ASSISTANT_TOOLS, runAssistantTool } from "@/lib/ai/assistant-tools";
 import { FALLBACK_BETA, MODEL, SAFETY_RULES, aiErrorMessage, getAnthropic } from "@/lib/ai/claude";
+import { guardAiQuota } from "@/lib/ai/rate-limit";
 
 export const maxDuration = 120;
 
@@ -35,6 +36,9 @@ export async function POST(req: Request) {
   if (history[history.length - 1].role !== "user") {
     return NextResponse.json({ error: "Last message must be from the user" }, { status: 400 });
   }
+
+  const limited = await guardAiQuota(session.supabase, session.user, "chat");
+  if (limited) return limited;
 
   let client: Anthropic;
   try {
