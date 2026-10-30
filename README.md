@@ -61,7 +61,7 @@ Open <http://localhost:3000>. Sign up (or continue as a guest), then click **Loa
 | Community suggestion | `/api/ai/community` | A short first answer, stored on the question with the server-only service-role key |
 | Voice | `src/hooks/use-voice.ts`, `/api/voice/*` | Silence detection on the mic, then ElevenLabs Scribe (speech-to-text), then the assistant, then ElevenLabs Flash (text-to-speech), then it listens again |
 
-Safety: the prompts forbid inventing medication doses and tell the assistant to flag emergencies first. Warning signs are shown as a separate "confirm with your vet" panel. Requests use Claude's server-side refusal fallback. Guests are limited to 20 AI requests per hour and 300 per day across all guests combined, enforced in the `consume_ai_quota` database function; signed-up users are not limited.
+Safety: the prompts forbid inventing medication doses and tell the assistant to flag emergencies first. Warning signs are shown as a separate "confirm with your vet" panel. Requests use Claude's server-side refusal fallback. Guests are limited to 60 AI requests per hour and 2,000 per day across all guests combined, enforced in the `consume_ai_quota` database function; signed-up users are not limited.
 
 ## Project layout
 

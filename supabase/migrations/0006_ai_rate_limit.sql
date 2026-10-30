@@ -1,7 +1,7 @@
 -- AI usage limits for anonymous guests, so "Continue as guest" cannot run up Anthropic costs.
 -- Each request to /api/ai/* by a guest records one row in ai_usage. Limits:
---   * 20 requests per guest in the last 1 hour;
---   * 300 requests in the last 24 hours across all anonymous users combined.
+--   * 60 requests per guest in the last 1 hour;
+--   * 2000 requests in the last 24 hours across all anonymous users combined.
 -- Signed-up users are not limited and nothing is recorded for them.
 
 create table if not exists public.ai_usage (
@@ -46,12 +46,12 @@ begin
   perform pg_advisory_xact_lock(hashtext('public.consume_ai_quota'));
 
   if (select count(*) from public.ai_usage
-       where user_id = v_user and created_at > now() - interval '1 hour') >= 20 then
+       where user_id = v_user and created_at > now() - interval '1 hour') >= 60 then
     return false;
   end if;
 
   if (select count(*) from public.ai_usage
-       where is_anonymous and created_at > now() - interval '24 hours') >= 300 then
+       where is_anonymous and created_at > now() - interval '24 hours') >= 2000 then
     return false;
   end if;
 
