@@ -35,7 +35,10 @@ begin
   end if;
 
   select u.is_anonymous into v_anon from auth.users u where u.id = v_user;
-  if not coalesce(v_anon, false) then
+  if not found then
+    return false;
+  end if;
+  if not v_anon then
     return true;
   end if;
 
