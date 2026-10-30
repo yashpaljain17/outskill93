@@ -28,12 +28,12 @@ export default function CommunityPage() {
   const [query, setQuery] = useState("");
   const [askOpen, setAskOpen] = useState(false);
 
-  const { data, loading, reload } = useRows(
+  const { data, loading, error, reload } = useRows(
     async () =>
       must(
         await supabase
           .from("questions")
-          .select("*, profiles!questions_author_id_fkey(display_name), answers(count)")
+          .select("*, profiles!questions_author_id_fkey(display_name), answers!answers_question_id_fkey(count)")
           .order("created_at", { ascending: false })
           .limit(100)
       ) as Question[],
@@ -105,6 +105,12 @@ export default function CommunityPage() {
             <Skeleton key={i} className="h-28 rounded-2xl" />
           ))}
         </div>
+      ) : error ? (
+        <EmptyState emoji="⚠️" title="Couldn't load questions" body={error}>
+          <Button variant="outline" onClick={() => reload()}>
+            Try again
+          </Button>
+        </EmptyState>
       ) : shown.length === 0 ? (
         <EmptyState emoji="💬" title="No questions yet" body="Be the first to ask, and get an instant AI suggestion while the community weighs in.">
           <Button onClick={ask}>

@@ -85,7 +85,7 @@ export async function POST(req: Request) {
     },
     pet: { name: pet.name, species: pet.species, breed: pet.breed, sex: pet.sex, age: petAge(pet.birth_date), weight_kg: pet.weight_kg },
     owner: {
-      name: user.user_metadata?.display_name ?? user.email?.split("@")[0] ?? "PawPal user",
+      name: user.user_metadata?.display_name || user.email?.split("@")[0] || (user.is_anonymous ? "Guest" : "PawPal user"),
       contact: b.contact,
     },
   };
