@@ -4,6 +4,7 @@ import { getUserClient } from "@/lib/supabase/server";
 import { buildPetContext } from "@/lib/ai/pet-context";
 import { ChecklistError, generateChecklist } from "@/lib/ai/checklist";
 import { aiErrorMessage } from "@/lib/ai/claude";
+import { guardAiQuota } from "@/lib/ai/rate-limit";
 
 export const maxDuration = 120;
 
@@ -20,6 +21,9 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid request" }, { status: 400 });
   }
+
+  const limited = await guardAiQuota(session.supabase, session.user, "checklist");
+  if (limited) return limited;
 
   try {
     const { text } = await buildPetContext(session.supabase, parsed.data.petId);
