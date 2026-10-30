@@ -17,7 +17,7 @@ export async function guardAiQuota(
   if (error) {
     console.error("consume_ai_quota failed", error);
     return NextResponse.json(
-      { error: "AI usage limits are not set up yet. Run supabase/migrations/0005_ai_rate_limit.sql." },
+      { error: "AI usage limits are not set up yet. Run supabase/migrations/0006_ai_rate_limit.sql." },
       { status: 503 }
     );
   }
