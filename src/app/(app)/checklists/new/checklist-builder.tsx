@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, ArrowDown, ArrowUp, Loader2, Plus, RotateCcw, Sparkles, Trash2, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -56,9 +56,8 @@ export function ChecklistBuilder({ initialPetId }: { initialPetId: string | null
     async () => must(await supabase.from("pets").select("*").order("created_at")) as Pet[],
     []
   );
-  useEffect(() => {
-    if (!petId && pets?.length) setPetId(pets[0].id);
-  }, [pets, petId]);
+  // Defaults to the first pet once pets load.
+  const effectivePetId = petId || pets?.[0]?.id || "";
 
   async function generate() {
     if (instructions.trim().length < 10) return toast.error("Paste or type the care instructions first.");
@@ -67,7 +66,7 @@ export function ChecklistBuilder({ initialPetId }: { initialPetId: string | null
       const res = await fetch("/api/ai/checklist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instructions, petId: petId || null }),
+        body: JSON.stringify({ instructions, petId: effectivePetId || null }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Generation failed");
@@ -99,9 +98,9 @@ export function ChecklistBuilder({ initialPetId }: { initialPetId: string | null
     if (!cleaned.items.length) return toast.error("Add at least one step.");
     setSaving(true);
     try {
-      const id = await saveChecklistDraft(supabase, cleaned, petId || null, instructions);
+      const id = await saveChecklistDraft(supabase, cleaned, effectivePetId || null, instructions);
       let routines = 0;
-      if (addRoutines && petId) routines = await createRoutinesFromItems(supabase, petId, cleaned.items);
+      if (addRoutines && effectivePetId) routines = await createRoutinesFromItems(supabase, effectivePetId, cleaned.items);
       toast.success(routines ? `Checklist saved and ${routines} routine${routines === 1 ? "" : "s"} added to Today` : "Checklist saved");
       router.push(`/checklists/${id}`);
     } catch (err) {
@@ -126,7 +125,7 @@ export function ChecklistBuilder({ initialPetId }: { initialPetId: string | null
           <CardContent className="space-y-4 pt-2">
             <div className="grid gap-3 sm:grid-cols-[1fr_2fr]">
               <Field label="For which pet?" htmlFor="pet">
-                <NativeSelect id="pet" value={petId} onChange={(e) => setPetId(e.target.value)}>
+                <NativeSelect id="pet" value={effectivePetId} onChange={(e) => setPetId(e.target.value)}>
                   <option value="">No specific pet</option>
                   {pets?.map((p) => (
                     <option key={p.id} value={p.id}>
@@ -278,7 +277,7 @@ export function ChecklistBuilder({ initialPetId }: { initialPetId: string | null
           )}
 
           <div className="flex flex-col gap-3 rounded-2xl border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
-            {petId && repeating > 0 ? (
+            {effectivePetId && repeating > 0 ? (
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={addRoutines} onCheckedChange={(v) => setAddRoutines(Boolean(v))} />
                 Also add {repeating} repeating step{repeating === 1 ? "" : "s"} to the Today list
